@@ -1,3 +1,5 @@
+export * from './auth';
+
 export type Priority = 'low' | 'medium' | 'high';
 
 export type AssignmentStatus = 'pending' | 'completed';
@@ -10,6 +12,7 @@ export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
 export interface Module {
   id: string;
+  userId: string;
   code: string;
   title: string;
   color: string;
@@ -17,6 +20,7 @@ export interface Module {
 
 export interface Assignment {
   id: string;
+  userId: string;
   moduleId: string;
   title: string;
   dueDate: string;
@@ -28,6 +32,7 @@ export interface Assignment {
 
 export interface Mutation<T = unknown> {
   id: string;
+  userId: string;
   type: MutationType;
   entity: MutationEntity;
   data: T;

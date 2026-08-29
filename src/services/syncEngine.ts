@@ -1,5 +1,6 @@
 import NetInfo from '@react-native-community/netinfo';
 import { Mutation, SyncResult, SyncStatus } from '../types';
+import { authService } from './authService';
 import {
   getPendingMutations,
   markAssignmentsSynced,
@@ -25,23 +26,14 @@ class SyncEngine {
   private lastSyncedAt: number | null = null;
   private unsubscribeNetInfo: (() => void) | null = null;
 
-  /**
-   * Returns current sync status.
-   */
   public getStatus(): SyncStatus {
     return this.currentStatus;
   }
 
-  /**
-   * Returns timestamp of the last successful sync.
-   */
   public getLastSyncedAt(): number | null {
     return this.lastSyncedAt;
   }
 
-  /**
-   * Subscribes a listener to sync status transitions.
-   */
   public subscribe(listener: SyncListener): () => void {
     this.listeners.add(listener);
     listener(this.currentStatus);
@@ -50,9 +42,6 @@ class SyncEngine {
     };
   }
 
-  /**
-   * Updates internal sync status and notifies active subscribers.
-   */
   private setStatus(status: SyncStatus): void {
     this.currentStatus = status;
     this.listeners.forEach((listener) => {
@@ -64,9 +53,6 @@ class SyncEngine {
     });
   }
 
-  /**
-   * Checks whether the device currently has active internet connectivity.
-   */
   public async isConnectedToInternet(): Promise<boolean> {
     try {
       const state = await NetInfo.fetch();
@@ -80,13 +66,11 @@ class SyncEngine {
     }
   }
 
-  /**
-   * Sends a single mutation to the cloud backend.
-   * If CLOUD_SYNC_CONFIG.ENABLED is false, performs a simulated network request.
-   */
-  private async sendMutationToCloud(mutation: Mutation): Promise<boolean> {
+  private async sendMutationToCloud(
+    mutation: Mutation,
+    sessionToken?: string
+  ): Promise<boolean> {
     if (CLOUD_SYNC_CONFIG.ENABLED) {
-      // Production Supabase REST endpoint integration
       const table = mutation.entity === 'assignment' ? 'assignments' : 'modules';
       const endpoint = `${CLOUD_SYNC_CONFIG.SUPABASE_URL}/${table}`;
 
@@ -111,14 +95,16 @@ class SyncEngine {
         body = undefined;
       }
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        apikey: CLOUD_SYNC_CONFIG.SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${sessionToken || CLOUD_SYNC_CONFIG.SUPABASE_ANON_KEY}`,
+        Prefer: 'return=minimal',
+      };
+
       const response = await fetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: CLOUD_SYNC_CONFIG.SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${CLOUD_SYNC_CONFIG.SUPABASE_ANON_KEY}`,
-          Prefer: 'return=minimal',
-        },
+        headers,
         body,
       });
 
@@ -129,7 +115,7 @@ class SyncEngine {
       return true;
     }
 
-    // Offline-first simulation: simulate realistic network latency (150ms)
+    // Offline simulation delay
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     if (!mutation.id || !mutation.type || !mutation.entity) {
@@ -140,11 +126,13 @@ class SyncEngine {
   }
 
   /**
-   * Reads pending mutations from the outbox queue in AsyncStorage,
+   * Reads pending mutations from the user-scoped outbox queue in AsyncStorage,
    * sends them to the cloud API, marks local items as isSynced = true,
    * and removes processed mutations from the outbox queue.
    */
-  public async syncPendingData(): Promise<SyncResult> {
+  public async syncPendingData(userId?: string): Promise<SyncResult> {
+    const activeUserId = userId || authService.getCurrentUserId() || 'global';
+
     if (this.isProcessing) {
       return {
         success: false,
@@ -154,7 +142,6 @@ class SyncEngine {
       };
     }
 
-    // 1. Check network connectivity with NetInfo
     const isOnline = await this.isConnectedToInternet();
     if (!isOnline) {
       this.setStatus('idle');
@@ -170,8 +157,8 @@ class SyncEngine {
     this.setStatus('syncing');
 
     try {
-      // 2. Read pending mutations from outbox queue
-      const pendingMutations = await getPendingMutations();
+      const pendingMutations = await getPendingMutations(activeUserId);
+      const session = authService.getCurrentSession();
 
       if (pendingMutations.length === 0) {
         this.setStatus('synced');
@@ -188,14 +175,12 @@ class SyncEngine {
       const syncedAssignmentIds: string[] = [];
       const errors: string[] = [];
 
-      // 3. Process each mutation
       for (const mutation of pendingMutations) {
         try {
-          const success = await this.sendMutationToCloud(mutation);
+          const success = await this.sendMutationToCloud(mutation, session?.token);
           if (success) {
             syncedMutationIds.push(mutation.id);
 
-            // Collect assignment IDs to mark as synced
             if (
               mutation.entity === 'assignment' &&
               mutation.data &&
@@ -213,14 +198,12 @@ class SyncEngine {
         }
       }
 
-      // 4. Mark local items as isSynced = true in local storage
       if (syncedAssignmentIds.length > 0) {
-        await markAssignmentsSynced(syncedAssignmentIds);
+        await markAssignmentsSynced(syncedAssignmentIds, activeUserId);
       }
 
-      // 5. Remove processed mutations from outbox queue
       if (syncedMutationIds.length > 0) {
-        await removeMutations(syncedMutationIds);
+        await removeMutations(syncedMutationIds, activeUserId);
       }
 
       const isAllSuccess = errors.length === 0;
@@ -249,10 +232,7 @@ class SyncEngine {
     }
   }
 
-  /**
-   * Starts auto-syncing when connectivity is regained.
-   */
-  public startAutoSync(): () => void {
+  public startAutoSync(userId?: string): () => void {
     if (this.unsubscribeNetInfo) {
       return this.unsubscribeNetInfo;
     }
@@ -267,7 +247,7 @@ class SyncEngine {
 
       if (isOnline) {
         if (wasOffline) {
-          this.syncPendingData().catch((err) => {
+          this.syncPendingData(userId).catch((err) => {
             console.error('Auto sync on reconnection failed:', err);
           });
         }
@@ -288,9 +268,6 @@ class SyncEngine {
 
 export const syncEngine = new SyncEngine();
 
-/**
- * Convenience helper to directly trigger synchronization of pending outbox data.
- */
-export async function syncPendingData(): Promise<SyncResult> {
-  return syncEngine.syncPendingData();
+export async function syncPendingData(userId?: string): Promise<SyncResult> {
+  return syncEngine.syncPendingData(userId);
 }

@@ -16,17 +16,20 @@ import { AddEditModal } from '../components/AddEditModal';
 import { AssignmentCard } from '../components/AssignmentCard';
 import { ModuleFilter } from '../components/ModuleFilter';
 import { OfflineBanner } from '../components/OfflineBanner';
+import { UserProfileHeader } from '../components/UserProfileHeader';
 import { useAssignments } from '../hooks/useAssignments';
+import { useAuth } from '../hooks/useAuth';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import { useSync } from '../hooks/useSync';
 import { Assignment, Priority } from '../types';
-import { formatDueDate, getDueStatus } from '../utils/dateUtils';
+import { getDueStatus } from '../utils/dateUtils';
 
 interface HomeScreenProps {
   onNavigateToAdd?: () => void;
 }
 
 export function HomeScreen({ onNavigateToAdd }: HomeScreenProps) {
+  const { user } = useAuth();
   const {
     assignments,
     modules,
@@ -165,7 +168,7 @@ export function HomeScreen({ onNavigateToAdd }: HomeScreenProps) {
     return map;
   }, [modules]);
 
-  // List Header Component containing Network status, Summary, Modules, and Filters
+  // List Header Component
   const renderListHeader = () => (
     <View style={styles.headerContainer}>
       {/* Network Status Header */}
@@ -199,12 +202,15 @@ export function HomeScreen({ onNavigateToAdd }: HomeScreenProps) {
         )}
       </View>
 
+      {/* User Profile Header with Student Name & Sign Out */}
+      <UserProfileHeader />
+
       {/* Main Title & Action Bar */}
       <View style={styles.titleRow}>
         <View>
           <Text style={styles.mainTitle}>Assignment Tracker</Text>
           <Text style={styles.mainSubtitle}>
-            MSc Computer Science Portfolio
+            {user ? `@${user.username} • MSc Portfolio` : 'MSc Academic Portfolio'}
           </Text>
         </View>
         <TouchableOpacity
@@ -226,7 +232,9 @@ export function HomeScreen({ onNavigateToAdd }: HomeScreenProps) {
         </View>
 
         {pendingSortedAssignments.length === 0 ? (
-          <Text style={styles.noPendingText}>🎉 No pending assignments! All caught up.</Text>
+          <Text style={styles.noPendingText}>
+            🎉 No pending assignments! All caught up.
+          </Text>
         ) : (
           <View style={styles.pendingPreviewList}>
             {pendingSortedAssignments.slice(0, 3).map((item) => {
@@ -266,7 +274,7 @@ export function HomeScreen({ onNavigateToAdd }: HomeScreenProps) {
 
       {/* Modules Section */}
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>MSc Modules</Text>
+        <Text style={styles.sectionTitle}>Enrolled Modules</Text>
       </View>
       <ModuleFilter
         modules={modules}
@@ -278,7 +286,7 @@ export function HomeScreen({ onNavigateToAdd }: HomeScreenProps) {
       <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search by title or module code..."
+          placeholder="Search assignments or modules..."
           placeholderTextColor="#9CA3AF"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -329,7 +337,7 @@ export function HomeScreen({ onNavigateToAdd }: HomeScreenProps) {
         {isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#2563EB" />
-            <Text style={styles.loadingText}>Loading assignments...</Text>
+            <Text style={styles.loadingText}>Loading student assignments...</Text>
           </View>
         ) : (
           <FlatList

@@ -12,9 +12,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { createAssignment } from '../services/assignmentService';
-import { getModules } from '../services/storage';
-import { Module, Priority } from '../types';
+import { useAssignments } from '../hooks/useAssignments';
+import { Priority } from '../types';
 
 interface AddAssignmentScreenProps {
   onNavigateBack: () => void;
@@ -25,32 +24,22 @@ export function AddAssignmentScreen({
   onNavigateBack,
   onSuccess,
 }: AddAssignmentScreenProps) {
+  const { modules, addAssignment, isLoading: isLoadingModules } = useAssignments();
+
   const [title, setTitle] = useState('');
   const [moduleId, setModuleId] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
-  const [modules, setModules] = useState<Module[]>([]);
-  const [isLoadingModules, setIsLoadingModules] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const loadedModules = await getModules();
-        setModules(loadedModules);
-        if (loadedModules.length > 0) {
-          setModuleId(loadedModules[0].id);
-        }
-      } catch (err) {
-        console.error('Failed to load modules:', err);
-      } finally {
-        setIsLoadingModules(false);
-      }
+    if (modules.length > 0 && !moduleId) {
+      setModuleId(modules[0].id);
     }
+  }, [modules, moduleId]);
 
-    load();
-
+  useEffect(() => {
     // Default due date to 7 days from now (YYYY-MM-DD)
     const defaultDate = new Date();
     defaultDate.setDate(defaultDate.getDate() + 7);
@@ -64,7 +53,7 @@ export function AddAssignmentScreen({
     }
 
     if (!moduleId) {
-      setError('Please select a module.');
+      setError('Please select an enrolled module.');
       return;
     }
 
@@ -83,8 +72,8 @@ export function AddAssignmentScreen({
         normalizedDueDate = `${normalizedDueDate}T23:59:59.000Z`;
       }
 
-      // Saves to AsyncStorage and enqueues mutation in outbox
-      await createAssignment({
+      // Saves to user-scoped AsyncStorage and enqueues mutation in outbox
+      await addAssignment({
         title: title.trim(),
         moduleId,
         dueDate: normalizedDueDate,
@@ -140,7 +129,7 @@ export function AddAssignmentScreen({
             <Text style={styles.label}>Assignment Title *</Text>
             <TextInput
               style={styles.textInput}
-              placeholder="e.g. Distributed Key-Value Store"
+              placeholder="e.g. Distributed Key-Value Store Lab"
               placeholderTextColor="#9CA3AF"
               value={title}
               onChangeText={setTitle}
@@ -152,6 +141,8 @@ export function AddAssignmentScreen({
             <Text style={styles.label}>MSc Module *</Text>
             {isLoadingModules ? (
               <ActivityIndicator size="small" color="#2563EB" />
+            ) : modules.length === 0 ? (
+              <Text style={styles.helperText}>No modules available.</Text>
             ) : (
               <View style={styles.moduleList}>
                 {modules.map((mod) => {

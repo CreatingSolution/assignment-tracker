@@ -1,4 +1,5 @@
 import { Assignment } from '../types';
+import { authService } from './authService';
 import {
   addMutation,
   getAssignments,
@@ -7,38 +8,47 @@ import {
 import { syncPendingData } from './syncEngine';
 
 /**
- * Retrieves all stored assignments.
+ * Retrieves all stored assignments for the active user.
  */
-export async function getAllAssignments(): Promise<Assignment[]> {
-  return getAssignments();
+export async function getAllAssignments(userId?: string): Promise<Assignment[]> {
+  const activeUserId = userId || authService.getCurrentUserId() || 'global';
+  return getAssignments(activeUserId);
 }
 
 /**
  * Creates a new assignment locally and queues a CREATE mutation in the outbox.
  */
 export async function createAssignment(
-  input: Omit<Assignment, 'id' | 'updatedAt' | 'isSynced'>
+  input: Omit<Assignment, 'id' | 'updatedAt' | 'isSynced' | 'userId'>,
+  userId?: string
 ): Promise<Assignment> {
+  const activeUserId = userId || authService.getCurrentUserId() || 'global';
+
   const newAssignment: Assignment = {
     ...input,
     id: `assign-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    userId: activeUserId,
     updatedAt: Date.now(),
     isSynced: false,
   };
 
-  const current = await getAssignments();
+  const current = await getAssignments(activeUserId);
   const updatedList = [newAssignment, ...current];
-  await saveAssignments(updatedList);
+  await saveAssignments(updatedList, activeUserId);
 
-  // Queue mutation in outbox
-  await addMutation({
-    type: 'CREATE',
-    entity: 'assignment',
-    data: newAssignment,
-  });
+  // Queue mutation in user-scoped outbox
+  await addMutation(
+    {
+      userId: activeUserId,
+      type: 'CREATE',
+      entity: 'assignment',
+      data: newAssignment,
+    },
+    activeUserId
+  );
 
   // Non-blocking attempt to sync if online
-  syncPendingData().catch(() => {});
+  syncPendingData(activeUserId).catch(() => {});
 
   return newAssignment;
 }
@@ -48,9 +58,11 @@ export async function createAssignment(
  */
 export async function updateAssignment(
   id: string,
-  updates: Partial<Omit<Assignment, 'id' | 'updatedAt' | 'isSynced'>>
+  updates: Partial<Omit<Assignment, 'id' | 'updatedAt' | 'isSynced' | 'userId'>>,
+  userId?: string
 ): Promise<Assignment | null> {
-  const current = await getAssignments();
+  const activeUserId = userId || authService.getCurrentUserId() || 'global';
+  const current = await getAssignments(activeUserId);
   const index = current.findIndex((item) => item.id === id);
 
   if (index === -1) {
@@ -66,17 +78,21 @@ export async function updateAssignment(
 
   const updatedList = [...current];
   updatedList[index] = updatedAssignment;
-  await saveAssignments(updatedList);
+  await saveAssignments(updatedList, activeUserId);
 
-  // Queue mutation in outbox
-  await addMutation({
-    type: 'UPDATE',
-    entity: 'assignment',
-    data: updatedAssignment,
-  });
+  // Queue mutation in user-scoped outbox
+  await addMutation(
+    {
+      userId: activeUserId,
+      type: 'UPDATE',
+      entity: 'assignment',
+      data: updatedAssignment,
+    },
+    activeUserId
+  );
 
   // Non-blocking attempt to sync if online
-  syncPendingData().catch(() => {});
+  syncPendingData(activeUserId).catch(() => {});
 
   return updatedAssignment;
 }
@@ -84,8 +100,12 @@ export async function updateAssignment(
 /**
  * Deletes an assignment and queues a DELETE mutation in the outbox.
  */
-export async function deleteAssignment(id: string): Promise<boolean> {
-  const current = await getAssignments();
+export async function deleteAssignment(
+  id: string,
+  userId?: string
+): Promise<boolean> {
+  const activeUserId = userId || authService.getCurrentUserId() || 'global';
+  const current = await getAssignments(activeUserId);
   const target = current.find((item) => item.id === id);
 
   if (!target) {
@@ -93,17 +113,21 @@ export async function deleteAssignment(id: string): Promise<boolean> {
   }
 
   const updatedList = current.filter((item) => item.id !== id);
-  await saveAssignments(updatedList);
+  await saveAssignments(updatedList, activeUserId);
 
-  // Queue mutation in outbox
-  await addMutation({
-    type: 'DELETE',
-    entity: 'assignment',
-    data: { id },
-  });
+  // Queue mutation in user-scoped outbox
+  await addMutation(
+    {
+      userId: activeUserId,
+      type: 'DELETE',
+      entity: 'assignment',
+      data: { id, userId: activeUserId },
+    },
+    activeUserId
+  );
 
   // Non-blocking attempt to sync if online
-  syncPendingData().catch(() => {});
+  syncPendingData(activeUserId).catch(() => {});
 
   return true;
 }
@@ -112,9 +136,11 @@ export async function deleteAssignment(id: string): Promise<boolean> {
  * Toggles status between pending and completed.
  */
 export async function toggleAssignmentStatus(
-  id: string
+  id: string,
+  userId?: string
 ): Promise<Assignment | null> {
-  const current = await getAssignments();
+  const activeUserId = userId || authService.getCurrentUserId() || 'global';
+  const current = await getAssignments(activeUserId);
   const target = current.find((item) => item.id === id);
 
   if (!target) {
@@ -122,5 +148,5 @@ export async function toggleAssignmentStatus(
   }
 
   const nextStatus = target.status === 'completed' ? 'pending' : 'completed';
-  return updateAssignment(id, { status: nextStatus });
+  return updateAssignment(id, { status: nextStatus }, activeUserId);
 }
